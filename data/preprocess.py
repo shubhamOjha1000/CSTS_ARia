@@ -164,80 +164,77 @@ def get_aria_frame_label(data_path, save_path):
     all_trimmed_num = 0
     all_untracked_num = 0
     os.makedirs(save_path, exist_ok=True)
-    for group in os.listdir(os.path.join(data_path, 'labels')):
-        with open(os.path.join(data_path, 'labels', group, 'data_summary.csv'), 'r') as f:
-            meta_rows = [row for i, row in enumerate(csv.reader(f)) if i != 0]
+    gaze_csvs = [f for f in os.listdir(os.path.join(data_path, 'labels')) if f.endswith('.csv')]
+    for gaze_file in tqdm(gaze_csvs):
+        video_id = os.path.splitext(gaze_file)[0]
+        container = av.open(os.path.join(data_path, 'full_scale', f'{video_id}.mp4'))
+        frame_length = container.streams.video[0].frames
 
-        for i in tqdm(range(len(meta_rows))):
-            subpath, video_id = meta_rows[i][6], meta_rows[i][11]
-            container = av.open(os.path.join(data_path, 'full_scale', f'movie_{video_id}.mp4'))
-            frame_length = container.streams.video[0].frames
+        with open(os.path.join(data_path, 'labels', gaze_file), 'r') as f:
+            gaze_rows = [row for i, row in enumerate(csv.reader(f)) if i != 0]
 
-            with open(os.path.join(data_path, 'labels', group, subpath), 'r') as f:
-                gaze_rows = [row for i, row in enumerate(csv.reader(f)) if i != 0]
+        if frame_length % 2 == 0 and frame_length != len(gaze_rows) * 2:
+            print(video_id, frame_length, len(gaze_rows))
+        if frame_length % 2 != 0 and len(gaze_rows) * 2 - frame_length != 1:
+            print(video_id, frame_length, len(gaze_rows))
 
-            if frame_length % 2 == 0 and frame_length != len(gaze_rows) * 2:
-                print(video_id, frame_length, len(gaze_rows))
-            if frame_length % 2 != 0 and len(gaze_rows) * 2 - frame_length != 1:
-                print(video_id, frame_length, len(gaze_rows))
+        # fps of video is 20 but it's 10 for gaze. We need to interpolate it.
+        interpolate_rows = list()
+        for j in range(len(gaze_rows)):
+            if j != len(gaze_rows)-1:  # not the last row, interpolate using the average of two neighboring label
+                timestamp, gaze_x, gaze_y = int(gaze_rows[j][0]), float(gaze_rows[j][1]), float(gaze_rows[j][2])
+                timestamp_next, gaze_x_next, gaze_y_next = int(gaze_rows[j+1][0]), float(gaze_rows[j+1][1]), float(gaze_rows[j+1][2])
+                interpolate_rows.append([j*2, timestamp, gaze_x, gaze_y])
+                interpolate_rows.append([j*2+1, (timestamp+timestamp_next)//2, (gaze_x+gaze_x_next)/2, (gaze_y+gaze_y_next)/2])
+            else:  # last row, just repeat the gaze label
+                timestamp, gaze_x, gaze_y = int(gaze_rows[j][0]), float(gaze_rows[j][1]), float(gaze_rows[j][2])
+                interpolate_rows.append([j*2, timestamp, gaze_x, gaze_y])
+                if frame_length % 2 == 0:  # don't need to repeat the last row if frame_length is odd
+                    interpolate_rows.append([j*2+1, timestamp+(timestamp-int(gaze_rows[j-1][0]))//2, gaze_x, gaze_y])
 
-            # fps of video is 20 but it's 10 for gaze. We need to interpolate it.
-            interpolate_rows = list()
-            for j in range(len(gaze_rows)):
-                if j != len(gaze_rows)-1:  # not the last row, interpolate using the average of two neighboring label
-                    timestamp, gaze_x, gaze_y = int(gaze_rows[j][0]), float(gaze_rows[j][1]), float(gaze_rows[j][2])
-                    timestamp_next, gaze_x_next, gaze_y_next = int(gaze_rows[j+1][0]), float(gaze_rows[j+1][1]), float(gaze_rows[j+1][2])
-                    interpolate_rows.append([j*2, timestamp, gaze_x, gaze_y])
-                    interpolate_rows.append([j*2+1, (timestamp+timestamp_next)//2, (gaze_x+gaze_x_next)/2, (gaze_y+gaze_y_next)/2])
-                else:  # last row, just repeat the gaze label
-                    timestamp, gaze_x, gaze_y = int(gaze_rows[j][0]), float(gaze_rows[j][1]), float(gaze_rows[j][2])
-                    interpolate_rows.append([j*2, timestamp, gaze_x, gaze_y])
-                    if frame_length % 2 == 0:  # don't need to repeat the last row if frame_length is odd
-                        interpolate_rows.append([j*2+1, timestamp+(timestamp-int(gaze_rows[j-1][0]))//2, gaze_x, gaze_y])
+        # convert gaze label to percentage and move the origin to the top-left corner
+        resized_label = list()
+        ori_image_edge = 1408  # the edge of original RGB frame. We have to rescale the gaze location.
+        for j in range(len(interpolate_rows)):  # convert (x,y) to (1-y, x) because the origin is on top-right and xy is swapped
+            resized_label.append([interpolate_rows[j][0],
+                                  interpolate_rows[j][1],
+                                  1 - interpolate_rows[j][3] / ori_image_edge,
+                                  interpolate_rows[j][2] / ori_image_edge])
 
-            # convert gaze label to percentage and move the origin to the top-left corner
-            resized_label = list()
-            ori_image_edge = 1408  # the edge of original RGB frame. We have to rescale the gaze location.
-            for j in range(len(interpolate_rows)):  # convert (x,y) to (1-y, x) because the origin is on top-right and xy is swapped
-                resized_label.append([interpolate_rows[j][0],
-                                      interpolate_rows[j][1],
-                                      1 - interpolate_rows[j][3] / ori_image_edge,
-                                      interpolate_rows[j][2] / ori_image_edge])
+        # add gaze type
+        for j in range(len(resized_label)):
+            if j == 0:
+                gaze_type = 0
+            else:
+                movement = np.sqrt(((resized_label[j][2] - resized_label[j-1][2]) * 640) ** 2 + ((resized_label[j][3] - resized_label[j-1][3]) * 640) ** 2)
+                gaze_type = 0 if movement <= 24 else 1  # for saccade, calculate from ego4d criterion proportional to the edge (40/1080*640)
+            resized_label[j].append(gaze_type)
 
-            # add gaze type
-            for j in range(len(resized_label)):
-                if j == 0:
-                    gaze_type = 0
-                else:
-                    movement = np.sqrt(((resized_label[j][2] - resized_label[j-1][2]) * 640) ** 2 + ((resized_label[j][3] - resized_label[j-1][3]) * 640) ** 2)
-                    gaze_type = 0 if movement <= 24 else 1  # for saccade, calculate from ego4d criterion proportional to the edge (40/1080*640)
-                resized_label[j].append(gaze_type)
+            if not (0 <= resized_label[j][2] <= 1 and 0 <= resized_label[j][3] <= 1):
+                gaze_type = 2  # trimmed
+                gaze_x = np.clip(resized_label[j][2], 0, 1)
+                gaze_y = np.clip(resized_label[j][3], 0, 1)
+                resized_label[j][2] = int(gaze_x)
+                resized_label[j][3] = int(gaze_y)
+                resized_label[j][4] = gaze_type
 
-                if not (0 <= resized_label[j][2] <= 1 and 0 <= resized_label[j][3] <= 1):
-                    gaze_type = 2  # trimmed
-                    gaze_x = np.clip(resized_label[j][2], 0, 1)
-                    gaze_y = np.clip(resized_label[j][3], 0, 1)
-                    resized_label[j][2] = int(gaze_x)
-                    resized_label[j][3] = int(gaze_y)
-                    resized_label[j][4] = gaze_type
+        if frame_length > len(resized_label):  # untracked
+            resized_label.extend([[k, -1, 0.5, 0.5, 3] for k in range(resized_label[-1][0] + 1, frame_length)])
 
-            if frame_length > len(resized_label):  # untracked
-                resized_label.extend([[k, -1, 0.5, 0.5, 3] for k in range(resized_label[-1][0] + 1, frame_length)])
+        os.makedirs(os.path.join(data_path, 'gaze_frame_label'), exist_ok=True)
+        with open(os.path.join(data_path, 'gaze_frame_label', f'{video_id}.csv'), 'w') as f:
+            csv_writer = csv.writer(f)
+            csv_writer.writerow(['frame', 'timestamps_ns', 'x', 'y', 'gaze_type'])
+            csv_writer.writerows(resized_label)
 
-            os.makedirs(os.path.join(data_path, 'gaze_frame_label'), exist_ok=True)
-            with open(os.path.join(data_path, 'gaze_frame_label', f'movie_{video_id}.csv'), 'w') as f:
-                csv_writer = csv.writer(f)
-                csv_writer.writerow(['frame', 'timestamps_ns', 'x', 'y', 'gaze_type'])
-                csv_writer.writerows(resized_label)
-
-            all_frames_num += len(resized_label)
-            for item in resized_label:
-                if item[-1] == 1:
-                    all_saccade_num += 1
-                elif item[-1] == 2:
-                    all_trimmed_num += 1
-                elif item[-1] == 3:
-                    all_untracked_num += 1
+        all_frames_num += len(resized_label)
+        for item in resized_label:
+            if item[-1] == 1:
+                all_saccade_num += 1
+            elif item[-1] == 2:
+                all_trimmed_num += 1
+            elif item[-1] == 3:
+                all_untracked_num += 1
 
     print('All saccade rate:', all_saccade_num / all_frames_num,
           'All trimmed rate:', all_trimmed_num / all_frames_num,
@@ -328,22 +325,32 @@ def main():
 
     # Uncomment this code block to run preprocessing on Aria dataset *************************************************
     path_to_aria = '/content/drive/MyDrive/Aria_eg_dataset'
-    #
+
+    data_path = path_to_aria
+    save_path = f'{path_to_aria}/gaze_frame_label'
+    get_aria_frame_label(data_path=data_path, save_path=save_path)
+
+
+    
+    
+    """
+    
     source_path = f'{path_to_aria}/full_scale'
     save_path = f'{path_to_aria}/clips'
     trim_aria_videos(source_path=source_path, save_path=save_path)
-    #
-    # data_path = path_to_aria
-    # save_path = f'{path_to_aria}/gaze_frame_label'
-    # get_aria_frame_label(data_path=data_path, save_path=save_path)
-    #
+    
+
+
     data_path = f'{path_to_aria}/clips'
     save_path = f'{path_to_aria}/clips.audio_24kHz'
     extract_audio(data_path=data_path, save_path=save_path, dataset='Aria')
     #
+
+
     data_path = f'{path_to_aria}/clips.audio_24kHz'
     save_path = f'{path_to_aria}/clips.audio_24kHz_stft'
     audio_stft(data_path, save_path, dataset='Aria')
+    """
     # ****************************************************************************************************************
 
     
