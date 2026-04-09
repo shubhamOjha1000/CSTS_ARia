@@ -295,6 +295,7 @@ def pyav_decode(
     frames_idx = None
     # If video stream was found, fetch video frames from the video.
     if container.streams.video:
+        stream_time_base = float(container.streams.video[0].time_base)
         video_frames, max_pts = pyav_decode_stream(
             container=container,
             start_pts=video_start_pts,
@@ -303,7 +304,7 @@ def pyav_decode(
             stream_name={"video": 0}
         )
         container.close()
-        frames_idx = torch.tensor([frame.index for frame in video_frames])
+        frames_idx = torch.tensor([round(frame.pts * stream_time_base * fps) for frame in video_frames])
 
         frames = [frame.to_rgb().to_ndarray() for frame in video_frames]
         frames = torch.as_tensor(np.stack(frames))
