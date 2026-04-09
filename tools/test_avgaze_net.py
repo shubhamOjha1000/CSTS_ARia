@@ -13,7 +13,7 @@ from slowfast.datasets import loader
 from slowfast.models import build_model
 from slowfast.utils.meters import TestGazeMeter
 from slowfast.utils.utils import frame_softmax
-# from slowfast.visualization.visualization import vis_inference, vis_video_forecasting, vis_av_st_fusion
+from slowfast.visualization.visualization import vis_inference
 
 logger = logging.get_logger(__name__)
 
@@ -71,15 +71,8 @@ def perform_test(test_loader, model, test_meter, cfg, writer=None):
         f1, recall, precision, threshold = metrics.adaptive_f1(preds_rescale, labels_hm, labels, dataset=cfg.TEST.DATASET)
 
         # Visualization
-        # gaze forecast
-        # if cur_iter <= 10:
-        # vis_inference(inputs=inputs[0], labels=labels, labels_hm=labels_hm, preds=preds_rescale, target_frames=target_frames,
-        #               meta=meta, output_dir=os.path.join(cfg.OUTPUT_DIR, 'visualization'))
-        # vis_video_forecasting(inputs=inputs[0], labels=labels, labels_hm=labels_hm, preds=preds_rescale, target_frames=target_frames,
-        #                       meta=meta, output_dir=os.path.join(cfg.OUTPUT_DIR, 'frames_for_video'))
-        # vis_av_st_fusion(inputs=inputs[0], audio_frames=audio_frames, labels=labels, target_frames=target_frames,
-        #                  spatial_attn=spatial_attn, temporal_attn=temporal_attn, meta=meta,
-        #                  output_dir=os.path.join(cfg.OUTPUT_DIR, 'st_visualization'))
+        vis_inference(inputs=inputs[0], labels=labels, labels_hm=labels_hm, preds=preds_rescale,
+                      meta=meta, output_dir=os.path.join(cfg.OUTPUT_DIR, 'visualization'))
 
         test_meter.iter_toc()
 
