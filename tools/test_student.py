@@ -113,12 +113,13 @@ def save_heatmap_overlay(frame_np, heatmap_np, save_path):
 def test(cfg, weights_path, device):
     # ── dataset ───────────────────────────────────────────────────────────────
     dataset = Student_Aria_Gaze(cfg, mode="test")
+    num_workers = min(cfg.DATA_LOADER.NUM_WORKERS, 2)   # Colab has limited CPUs
     loader  = torch.utils.data.DataLoader(
         dataset,
         batch_size=cfg.TEST.BATCH_SIZE,
         shuffle=False,
-        num_workers=cfg.DATA_LOADER.NUM_WORKERS,
-        pin_memory=cfg.DATA_LOADER.PIN_MEMORY,
+        num_workers=num_workers,
+        pin_memory=device.type == "cuda",
         drop_last=False,
     )
     print(f"Dataset: {len(dataset)} clips  |  {len(loader)} batches")
@@ -151,10 +152,10 @@ def test(cfg, weights_path, device):
             if isinstance(frames, (list, tuple)):
                 frames = frames[0]   # unpack single-pathway
 
-            frames  = frames.to(device)   # [B, C, T, H, W]
-            audio   = audio.to(device)    # [B, 1, F_STU, L_STU]
-            label   = label.to(device)    # [B, T, 2]
-            label_hm = label_hm.to(device) # [B, T, H/4, W/4]
+            frames   = frames.to(device, non_blocking=True)    # [B, C, T, H, W]
+            audio    = audio.to(device, non_blocking=True)    # [B, 1, F_STU, L_STU]
+            label    = label.to(device, non_blocking=True)    # [B, T, 2]
+            label_hm = label_hm.to(device, non_blocking=True) # [B, T, H/4, W/4]
 
             out = model(frames, audio)
 
@@ -219,11 +220,15 @@ if __name__ == "__main__":
     if args.opts:
         cfg.merge_from_list(args.opts)
 
-    cfg.NUM_GPUS     = max(cfg.NUM_GPUS, 0)
     cfg.TRAIN.ENABLE = False
 
-    device = torch.device("cuda" if cfg.NUM_GPUS > 0 and torch.cuda.is_available()
-                          else "cpu")
-    print(f"Device: {device}")
+    # Always prefer GPU if available, regardless of NUM_GPUS config value
+    if torch.cuda.is_available():
+        device = torch.device("cuda")
+        torch.backends.cudnn.benchmark = True
+        print(f"Device: {device}  ({torch.cuda.get_device_name(0)})")
+    else:
+        device = torch.device("cpu")
+        print("Device: cpu")
 
     test(cfg, args.weights, device)
