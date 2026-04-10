@@ -340,7 +340,7 @@ class CSTS(nn.Module):
         else:
             return {}
 
-    def forward(self, x, y, return_embed=False, return_spatial_attn=False, return_temporal_attn=False):
+    def forward(self, x, y, return_embed=False, return_spatial_attn=False, return_temporal_attn=False, return_feats=False):
         inpt = x[0]  # size (B, 3, 8, 256, 256)
         x = self.patch_embed(inpt)  # size (B, 16384, 96)  16384 = 4*64*64
         y = self.patch_embed_audio(y)
@@ -407,8 +407,10 @@ class CSTS(nn.Module):
         # Block4, video layer * 2 + audio layer * 2
         for i, blk in enumerate(self.blocks[14:]):
             x, thw = blk(x, thw)
+        vis_feat = x  # [B, N_vis, 768]
         for i, blk in enumerate(self.blocks_audio[3:]):  # 4 layers
             y, thw_audio = blk(y, thw_audio)
+        aud_feat = y  # [B, N_aud, 768]
 
         # ==================================== Spatial-Temporal Fusion (Parallel) ====================================
         # Spatial
@@ -422,10 +424,11 @@ class CSTS(nn.Module):
         y_tmp = y_spatial
 
         av_spatial = torch.cat([x_spatial, y_spatial], dim=1)  # (B, 260, 768)
-        if not self.spatial_audio_attn and not return_spatial_attn:
+        spatial_attn = None
+        if not self.spatial_audio_attn and not return_spatial_attn and not return_feats:
             av_spatial, _ = self.spatial_fusion(av_spatial, thw_shape=thw)  # (B, 260, 768)
-        elif not self.spatial_audio_attn and return_spatial_attn:
-            av_spatial, _, spatial_attn = self.spatial_fusion(av_spatial, thw_shape=thw, return_spatial_attn=return_spatial_attn)
+        elif not self.spatial_audio_attn and (return_spatial_attn or return_feats):
+            av_spatial, _, spatial_attn = self.spatial_fusion(av_spatial, thw_shape=thw, return_spatial_attn=True)
         else:
             av_spatial, _, audio_attn = self.spatial_fusion(av_spatial, thw_shape=thw)  # (B, 260, 768)
         x_spatial = av_spatial[:, :x.size(1), :]  # (B, 256, 768)
@@ -453,8 +456,8 @@ class CSTS(nn.Module):
         # Reweight
         x_weights = av_temporal[:, :x_temporal.size(1), :]  # (B, 4, 768)
         x_tmp = x_spatial.reshape(B_v, *thw, C_v)  # (B, 4, 8, 8, 768)
-        x_reweight = x_tmp * x_weights.unsqueeze(2).unsqueeze(3)  # (B, 4, 8, 8, 768)
-        x_reweight = x_reweight.reshape(B_v, N_v, C_v)  # (B, 256, 768)  # input to decoder
+        fused_vol = x_tmp * x_weights.unsqueeze(2).unsqueeze(3)  # (B, 4, 8, 8, 768)
+        x_reweight = fused_vol.reshape(B_v, N_v, C_v)  # (B, 256, 768)  # input to decoder
 
         y_weights = av_temporal[:, x_temporal.size(1):, :]  # (B, 4, 768)
         y_reweight = y_ori_fold * y_weights.unsqueeze(2).unsqueeze(3)  # (B, 4, 8, 8, 768)
@@ -480,7 +483,19 @@ class CSTS(nn.Module):
 
         feat = self.classifier(feat)
 
-        if not return_embed and not return_spatial_attn and not return_temporal_attn:
+        if return_feats:
+            N_vis = x_spatial.size(1)
+            av_attn = spatial_attn.mean(dim=1)[:, :N_vis, N_vis:] if spatial_attn is not None else None  # [B, N_vis, N_aud]
+            return {
+                "heatmap":    feat,                  # [B, 1, T, H/4, W/4]
+                "vis_stage1": inter_feat[1][0],      # [B, 16384, 192]
+                "vis_stage2": inter_feat[2][0],      # [B, 4096,  384]
+                "vis_feat":   vis_feat,              # [B, N_vis, 768]
+                "aud_feat":   aud_feat,              # [B, N_aud, 768]
+                "fused_feat": fused_vol,             # [B, T, 8, 8, 768]
+                "av_attn":    av_attn,               # [B, N_vis, N_aud]
+            }
+        elif not return_embed and not return_spatial_attn and not return_temporal_attn:
             return feat
         elif not return_embed and (return_spatial_attn or return_temporal_attn):
             variable = [feat]
