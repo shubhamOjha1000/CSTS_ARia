@@ -137,19 +137,21 @@ class FeatureDistillationLoss(nn.Module):
         s_fused: torch.Tensor,  # [B, 512]        student fused embedding
     ) -> Dict[str, torch.Tensor]:
         # Visual alignment
-        t_vis_proj = self.proj_vis(t_vis).mean(dim=1)    # [B, proj_dim]
+        # detach teacher *input* so the teacher encoder stays frozen,
+        # but proj_vis stays in the graph and receives gradients
+        t_vis_proj = self.proj_vis(t_vis.detach()).mean(dim=1)   # [B, proj_dim]
         s_vis_proj = self.proj_stu_v(s_vis)
-        loss_vis   = F.mse_loss(s_vis_proj, t_vis_proj.detach())
+        loss_vis   = F.mse_loss(s_vis_proj, t_vis_proj)
 
         # Audio alignment
-        t_aud_proj = self.proj_aud(t_aud).mean(dim=1)    # [B, proj_dim]
+        t_aud_proj = self.proj_aud(t_aud.detach()).mean(dim=1)   # [B, proj_dim]
         s_aud_proj = self.proj_stu_a(s_aud)
-        loss_aud   = F.mse_loss(s_aud_proj, t_aud_proj.detach())
+        loss_aud   = F.mse_loss(s_aud_proj, t_aud_proj)
 
         # Cross-modal cosine alignment: teacher AV mean vs student fused
-        t_av_mean    = (t_vis_proj + t_aud_proj) / 2.0   # [B, proj_dim]
+        t_av_mean    = (t_vis_proj + t_aud_proj) / 2.0           # [B, proj_dim]
         s_fused_proj = self.proj_fused(s_fused)
-        cos_sim      = F.cosine_similarity(s_fused_proj, t_av_mean.detach(), dim=-1)
+        cos_sim      = F.cosine_similarity(s_fused_proj, t_av_mean, dim=-1)
         loss_cos     = (1.0 - cos_sim).mean()
 
         total = loss_vis + loss_aud + 0.5 * loss_cos
