@@ -20,10 +20,12 @@ Run on Colab
 ------------
   cd /content/CSTS_ARia
   python tools/train_distillation.py \\
-      --cfg     configs/Aria/CSTS_Aria_Gaze_Estimation.yaml \\
-      --teacher /content/drive/MyDrive/checkpoints/teacher.pth \\
-      --output  /content/drive/MyDrive/distillation_run \\
-      --epochs  20 \\
+      --cfg       configs/Aria/CSTS_Aria_Gaze_Estimation.yaml \\
+      --teacher   /content/drive/MyDrive/Aria_eg_dataset/csts_ego4d_forecast.pyth \\
+      --output    /content/drive/MyDrive/distillation_run \\
+      --epochs    20 \\
+      --train-csv data/distill_train_aria.csv \\
+      --val-csv   data/distill_test_aria.csv \\
       NUM_GPUS 0 \\
       DATA.PATH_PREFIX /content/drive/MyDrive/Aria_eg_dataset/clips \\
       TRAIN.BATCH_SIZE 4 \\
@@ -147,12 +149,16 @@ class DistillationAriaDataset(torch.utils.data.Dataset):
       index         int
     """
 
-    def __init__(self, cfg, mode: str, num_retries: int = 10):
+    def __init__(self, cfg, mode: str, num_retries: int = 10,
+                 train_csv: str = "data/distill_train_aria.csv",
+                 val_csv:   str = "data/distill_test_aria.csv"):
         assert mode in ("train", "val", "test")
         self.mode         = mode
         self.cfg          = cfg
         self._num_retries = num_retries
         self._video_meta  = {}
+        self._train_csv   = train_csv
+        self._val_csv     = val_csv
 
         self._num_clips = (
             1 if mode in ("train", "val")
@@ -161,9 +167,7 @@ class DistillationAriaDataset(torch.utils.data.Dataset):
         self._construct_loader()
 
     def _construct_loader(self):
-        csv_path = ("data/train_aria_gaze.csv"
-                    if self.mode == "train"
-                    else "data/test_aria_gaze.csv")
+        csv_path = (self._train_csv if self.mode == "train" else self._val_csv)
         assert os.path.exists(csv_path), f"CSV not found: {csv_path}"
 
         self._path_to_videos = []
@@ -589,8 +593,12 @@ def parse_args():
                    help="Output directory for checkpoints and logs")
     p.add_argument("--epochs",  type=int, default=20,
                    help="Total training epochs (default: 20)")
-    p.add_argument("--lr",      type=float, default=1e-4,
+    p.add_argument("--lr",        type=float, default=1e-4,
                    help="Initial learning rate (default: 1e-4)")
+    p.add_argument("--train-csv", default="data/distill_train_aria.csv",
+                   help="CSV of training clips  (default: data/distill_train_aria.csv)")
+    p.add_argument("--val-csv",   default="data/distill_test_aria.csv",
+                   help="CSV of validation clips (default: data/distill_test_aria.csv)")
     p.add_argument("opts", nargs=argparse.REMAINDER,
                    help="Extra cfg key=value overrides")
     return p.parse_args()
@@ -636,8 +644,14 @@ def main():
 
     # ── datasets ──────────────────────────────────────────────────────────────
     print("Building datasets …")
-    train_ds = DistillationAriaDataset(cfg, mode="train")
-    val_ds   = DistillationAriaDataset(cfg, mode="val")
+    print(f"  Train CSV : {args.train_csv}")
+    print(f"  Val   CSV : {args.val_csv}")
+    train_ds = DistillationAriaDataset(cfg, mode="train",
+                                        train_csv=args.train_csv,
+                                        val_csv=args.val_csv)
+    val_ds   = DistillationAriaDataset(cfg, mode="val",
+                                        train_csv=args.train_csv,
+                                        val_csv=args.val_csv)
     print(f"  Train clips : {len(train_ds)}")
     print(f"  Val   clips : {len(val_ds)}")
 
