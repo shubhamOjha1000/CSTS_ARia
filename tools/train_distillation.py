@@ -414,7 +414,7 @@ class DistillationTrainer:
 
             # ── Teacher forward (frozen) ──────────────────────────────────────
             with torch.no_grad():
-                t_out = self.teacher(video, audio_tea, return_feats=True)
+                t_out = self.teacher([video], audio_tea, return_feats=True)
 
             # ── Student forward ───────────────────────────────────────────────
             s_out = self.student(video, audio_stu)
@@ -482,7 +482,7 @@ class DistillationTrainer:
             audio_stu = audio_stu.to(self.device, non_blocking=True)
             hm_gt     = hm_gt.to(self.device, non_blocking=True)
 
-            t_out = self.teacher(video, audio_tea, return_feats=True)
+            t_out = self.teacher([video], audio_tea, return_feats=True)
             s_out = self.student(video, audio_stu)
 
             l1 = self.loss_v1(s_out["heatmap"],
