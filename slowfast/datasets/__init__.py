@@ -8,3 +8,4 @@ from .ego4d_avgaze import Ego4d_av_gaze
 from .ego4d_avgaze_forecast import Ego4d_av_gaze_forecast
 from .aria_avgaze import Aria_av_gaze
 from .aria_avgaze_forecast import Aria_av_gaze_forecast
+from .student_aria_dataset import Student_Aria_Gaze
